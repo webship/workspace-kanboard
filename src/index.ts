@@ -45,7 +45,7 @@ export function assistantContext(): string {
   return [
     'Kanboard (a plugin, @webship.co/workspace-kanboard), the open-source Kanban project management software: a site is built with',
     '`bash cmd-kanboard-project.sh <name> --install --add-users --sample-content` from a sites folder (dev, test, sandboxes, demos):',
-    'Kanboard\'s own image (1.2.58 by default, `--release`) on the project\'s own MariaDB 11.4, on DDEV at https://<name>.ddev.site; other runtimes are not proven for it yet.',
+    'Kanboard\'s own image (1.2.58 by default, `--release`) on the project\'s own MariaDB 11.4, on DDEV at https://<name>.ddev.site, or with `--runtime docker`, `podman` or `kubernetes` as the web container of the runtime\'s own project, its own start run as the host user, at the address the runtime gives it; Lando and Docksal are not proven for it yet.',
     'The builder asks for 1 GB of free memory before it starts. Kanboard\'s core only: no plugin of its directory is installed.',
     '`--install` puts the workspace account in the place of the administrator Kanboard\'s schema starts with (admin, password admin), so no default password is left; Kanboard has no sign-up;',
     '`--add-users` adds the default accounts (owner: the manager of the project Webship site, member: its member, reader: its viewer; stranger: not in it), each @example.com, logging in with its username;',

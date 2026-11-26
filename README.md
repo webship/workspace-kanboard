@@ -35,8 +35,8 @@ bash core/scripts/plugins.sh --configure kanboard
 
 - A sites folder: one of the `dev`, `test`, `sandboxes` or `demos` plugins. The commands are placed there.
 - The AI folders `ai-agents`, `ai-skills`, `ai-commands` and `ai-prompts`, where its AI items land.
-- DDEV, the container runtime Kanboard is proven on so far. Docker Compose, Podman and Kubernetes are not proven for it
-  yet: asked for one, the builder says so and changes nothing.
+- A container runtime: DDEV (the default), Docker Compose, Podman or Kubernetes (`--runtime`). Lando and Docksal are
+  not proven for it yet: asked for one, the builder says so and changes nothing.
 - A download of about 35 MB for Kanboard's image the first time, and memory: the builder asks for 1 GB free before it
   starts (`free -m`).
 
@@ -53,7 +53,7 @@ bash cmd-kanboard-project.sh mysite --install --add-users --sample-content
 | `--add-users` | With `--install`: the default accounts, in their roles of the project Webship site |
 | `--sample-content` | With `--install --add-users`: three tasks of Webship site in the board's columns, one of them closed, a category, a tag, a comment and a subtask |
 | `--release <X.Y.Z>` | The release of Kanboard's image (tagged `v<X.Y.Z>`): 1.2.58 by default |
-| `--runtime ddev` | DDEV, the runtime proven for Kanboard so far (the default, or `container.runtime` of `settings.yml`) |
+| `--runtime <runtime>` | `ddev` (the default, or `container.runtime` of `settings.yml`), `docker` (Docker Compose), `podman` or `kubernetes` |
 | `--launch` | Open the site when it is ready |
 
 A project of the same name is deleted first, with its database and its files. Kanboard's own image
@@ -82,6 +82,36 @@ you can read. The builder never prints them.
 **Failed logins.** Kanboard asks for a captcha after three wrong passwords in a row for an account, and locks the
 account for 15 minutes after six; a right login starts the count again. A test suite tries one wrong password at a
 time, so a site the workspace builds keeps Kanboard's own settings.
+
+### On Docker Compose, Podman and Kubernetes
+
+```bash
+bash cmd-kanboard-project.sh mysite --install --add-users --sample-content --runtime docker   # or podman, kubernetes
+```
+
+The builder works through the Workspace's runtime layer there, and the site is the same: Kanboard 1.2.58 on the
+project's own MariaDB 11.4, the same accounts and the same sample content, at the address the runtime gives it
+(`http://127.0.0.1:<port>`, or the node's address and a NodePort on Kubernetes). The stack's Mailpit catches its mail.
+
+- **Kanboard's image is the web container's** (`rt_stack image docker.io/kanboard/kanboard:v1.2.58`; it is Alpine, so
+  the stack adds its layer with apk). Kanboard's code stays where its image keeps it (`/var/www/app`), and the stack
+  mounts the project on `/var/www/html`.
+- **Its own start runs as the host user** (`rt_serve`, `kanboard/kanboard-serve.sh`): the site's values in the
+  environment, then the image's entrypoint and s6, with nginx, PHP-FPM and the daily cronjob. To run as a user, the
+  project's web image (`rt_web_build`):
+  - has nginx listen on 8080, plain http, with no certificate, and the entrypoint make none: on Podman the folder
+    Kanboard's image declares for it is an empty volume, which a user cannot write;
+  - has PHP-FPM run its pool as the user it starts as;
+  - gives the host user s6's service folders, the socket and the pid, nginx's temporary files and the folders
+    Kanboard's image declares as its data and plugins volumes, so the entrypoint's chown of them has nothing to do;
+  - has Kanboard keep its data (its files and its cache) in the project's `kanboard/data` (`DATA_DIR`, in the site's
+    values), and its plugins where its image does. Kanboard's image declares its data folder a volume, so a link there
+    would be covered: Docker and Podman mount the volume through it;
+  - runs the daily cronjob at 08:00, as Kanboard's crontab says, from the cron service itself: BusyBox's crond needs
+    root to run a job ("can't set groups");
+  - keeps tini as the container's first process, and Kanboard's own health check, on 8080.
+- **The site script** runs in the web container there, with the site's values, as the host user.
+- Everything but tini and `runuser` runs as the host user: s6, nginx, PHP-FPM and the cronjob.
 
 ### The default accounts
 
