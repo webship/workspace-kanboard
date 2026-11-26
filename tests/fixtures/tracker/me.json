@@ -1,0 +1,23 @@
+{
+ "id": 3,
+ "username": "member",
+ "is_ldap_user": false,
+ "name": "Member Test",
+ "email": "member@example.com",
+ "google_id": null,
+ "github_id": null,
+ "notifications_enabled": 0,
+ "timezone": null,
+ "language": null,
+ "disable_login_form": 0,
+ "twofactor_activated": false,
+ "notifications_filter": 4,
+ "nb_failed_login": 0,
+ "lock_expiration_date": 0,
+ "gitlab_id": null,
+ "role": "app-user",
+ "is_active": 1,
+ "avatar_path": null,
+ "filter": null,
+ "theme": "light"
+}
