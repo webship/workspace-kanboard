@@ -1,0 +1,56 @@
+[
+ {
+  "id": 6,
+  "event_name": "task.close",
+  "creator_id": 2,
+  "author_username": "owner",
+  "author_name": "Owner Test",
+  "task_id": 3,
+  "date_creation": 1795671717
+ },
+ {
+  "id": 5,
+  "event_name": "task.create",
+  "creator_id": 2,
+  "author_username": "owner",
+  "author_name": "Owner Test",
+  "task_id": 3,
+  "date_creation": 1795671717
+ },
+ {
+  "id": 4,
+  "event_name": "task.create",
+  "creator_id": 3,
+  "author_username": "member",
+  "author_name": "Member Test",
+  "task_id": 2,
+  "date_creation": 1795671717
+ },
+ {
+  "id": 3,
+  "event_name": "subtask.create",
+  "creator_id": 2,
+  "author_username": "owner",
+  "author_name": "Owner Test",
+  "task_id": 1,
+  "date_creation": 1795671717
+ },
+ {
+  "id": 2,
+  "event_name": "comment.create",
+  "creator_id": 2,
+  "author_username": "owner",
+  "author_name": "Owner Test",
+  "task_id": 1,
+  "date_creation": 1795671717
+ },
+ {
+  "id": 1,
+  "event_name": "task.create",
+  "creator_id": 2,
+  "author_username": "owner",
+  "author_name": "Owner Test",
+  "task_id": 1,
+  "date_creation": 1795671717
+ }
+]

@@ -1,0 +1,41 @@
+# Kanboard of this project: Kanboard's own image (its web server and PHP) on the project's own MariaDB (the container
+# tool's db service), served at the project's address; the project's web container keeps the mail catcher. Written by
+# the Kanboard builder of the workspace (the plugin's docker-compose.kanboard.yaml); build again rather than editing by
+# hand. The site's own values are in kanboard/env, which only you can read.
+services:
+  web:
+    environment:
+      - HTTP_EXPOSE=8093:80,8025:8025
+      - HTTPS_EXPOSE=8457:80,8026:8025
+  kanboard:
+    image: "${KANBOARD_IMAGE:-docker.io/kanboard/kanboard:v1.2.58}"
+    container_name: ddev-${DDEV_SITENAME}-kanboard
+    labels:
+      com.ddev.site-name: ${DDEV_SITENAME}
+      com.ddev.approot: ${DDEV_APPROOT}
+    restart: "no"
+    expose:
+      - "80"
+    # Kanboard makes its tables in the project's database on its first request, once it takes connections.
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - ${DDEV_APPROOT}/kanboard/env
+    volumes:
+      # The plugin's scripts, which the builder and the tool run in this container.
+      - ${DDEV_APPROOT}/kanboard:/opt/webship:ro
+      # What Kanboard keeps beside its database (attachments, avatars, its cache) and its plugins, named after the
+      # project.
+      - data:/var/www/app/data
+      - plugins:/var/www/app/plugins
+    environment:
+      VIRTUAL_HOST: ${DDEV_HOSTNAME}
+      HTTP_EXPOSE: "80:80"
+      HTTPS_EXPOSE: "443:80"
+# Named after the project, so removing the project removes them with its database, and a new build starts empty.
+volumes:
+  data:
+    name: ddev-${DDEV_SITENAME}-kanboard-data
+  plugins:
+    name: ddev-${DDEV_SITENAME}-kanboard-plugins
