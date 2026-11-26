@@ -14,7 +14,8 @@
  *   content   the sample content, made as its authors: a category, a tag, three tasks in the board's columns, one of
  *             them closed, a comment and a subtask
  *   tidy      what a stopped test run left: tasks titled "Webship test …" made by the default accounts in the sample
- *             project, removed by Kanboard's own removal with what it keeps of them
+ *             project, removed by Kanboard's own removal with what it keeps of them, and the project's tags titled
+ *             "Webship test …" that no task has
  *   list      the accounts, and what the sample project holds
  *   token     a new API access token of the account on the input (TOKEN <token>), in the place of its earlier one
  *   counts    what the sample project holds, one count a line
@@ -255,6 +256,17 @@ foreach ($verbs as $verb) {
             c('taskModel')->remove((int) $tid);
         }
         say('tidy: ' . count($left) . ' task(s) of a stopped test run removed');
+        // A tag a test made ("Webship test …"), which Kanboard keeps in the project once no task has it.
+        $tags = 0;
+        foreach (db()->table('tags')->eq('project_id', (int) $project['id'])->like('name', TEST_PREFIX . '%')->findAll() as $tag) {
+            if (! db()->table('task_has_tags')->eq('tag_id', (int) $tag['id'])->exists()) {
+                c('tagModel')->remove((int) $tag['id']);
+                $tags++;
+            }
+        }
+        if ($tags) {
+            say("tidy: {$tags} tag(s) a test made removed");
+        }
     } elseif ($verb === 'list') {
         $project = sample_project();
         foreach (db()->table('users')->asc('id')->findAll() as $u) {

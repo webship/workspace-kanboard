@@ -125,8 +125,9 @@ never shown. The dashboard then acts as that person.
 
 `--tidy` deletes for good, with no way back. It removes the tasks a stopped test run left: titled "Webship test …",
 made by one of the default accounts in Webship site, by Kanboard's own removal, with what it keeps of them (comments,
-subtasks, tags, links, files). A task with another title ("Webship testing plan") or another author stays, and so does
-everything of other people.
+subtasks, tags, links, files), and the project's tags titled "Webship test …" that no task has (Kanboard keeps a tag a
+test made). A task with another title ("Webship testing plan") or another author stays, and so does everything of
+other people.
 
 ## The tasks as work items
 

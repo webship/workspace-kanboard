@@ -70,7 +70,8 @@ bash cmd-tools-kanboard-cli.sh mysite --connect member                # the dash
 ```
 
 `--tidy` removes the tasks titled "Webship test …" that the default accounts made in Webship site, by Kanboard's own
-removal, with what it keeps of them (comments, subtasks, tags, links, files). Nothing else is touched.
+removal, with what it keeps of them (comments, subtasks, tags, links, files), and the project's tags titled "Webship
+test …" that no task has. Nothing else is touched.
 
 `--connect` makes a new API access token of the account with Kanboard's own code (in the place of its earlier one)
 and writes it, with the account's username, the site's address and the sample project (Webship site) as the default
