@@ -35,8 +35,11 @@ The site is Kanboard's own image (`kanboard/kanboard`: its web server and PHP in
 MariaDB 11.4, Kanboard's core only: no plugin of its directory is installed. On DDEV the image takes the project's
 address, `https://mysite.ddev.site`; the project's web container keeps the mail catcher at
 `https://mysite.ddev.site:8026`, where the site's mail goes. Kanboard has no sign-up: an administrator makes the
-accounts. Docker Compose, Podman and Kubernetes are not proven for Kanboard yet: the builder says so and stops before
-it changes anything.
+accounts. With `--runtime docker`, `podman` or `kubernetes` the builder works through the Workspace's runtime layer:
+Kanboard's image is the web container's, its own start (its entrypoint, then s6 with nginx, PHP-FPM and the daily
+cronjob) runs as the host user, on the project's own MariaDB 11.4, at the address the runtime gives it; the stack's
+Mailpit catches its mail. Lando and Docksal are not proven for Kanboard yet: the builder says so and stops before it
+changes anything.
 
 The builder asks for 1 GB of free memory (`free -m`) before it starts. The first build downloads about 35 MB for
 Kanboard's image. Build one site at a time, and stop a site you are not using.
@@ -47,7 +50,7 @@ Kanboard's image. Build one site at a time, and stop a site you are not using.
 | `--add-users` | With `--install`: the default accounts, in their roles of the project Webship site |
 | `--sample-content` | With `--install --add-users`: three tasks of Webship site in the board's columns, one of them closed, a category, a tag, a comment and a subtask |
 | `--release <X.Y.Z>` | The release of the image (tagged `v<X.Y.Z>`): 1.2.58 by default |
-| `--runtime ddev` | The container runtime: DDEV, the one proven for Kanboard so far |
+| `--runtime <runtime>` | The container runtime: `ddev` (the default), `docker` (Docker Compose), `podman` or `kubernetes` |
 | `--launch` | Open the site when it is ready |
 
 A project of the same name is deleted first, with its database and its files. The site's own values are kept in

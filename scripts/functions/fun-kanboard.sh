@@ -8,8 +8,12 @@
 # after the core's own functions. Everything runs in containers, never on the host:
 #   - DDEV (the default): Kanboard's image is a service of a generic project, on the project's own MariaDB (the db
 #     service), at https://<name>.ddev.site; the project's web container keeps the mail catcher.
-# Docker Compose, Podman, Kubernetes, Lando and Docksal are not proven yet: asked for one, the builder says so and
-# changes nothing.
+#   - Docker Compose, Podman and Kubernetes (--runtime docker|podman|kubernetes), through the core's runtime layer:
+#     Kanboard's image is the web container's (rt_stack image), and its own start (its entrypoint: a certificate, then
+#     s6 with nginx, PHP-FPM and the daily cronjob) runs as the host user (rt_serve), on the project's own MariaDB, at the
+#     address the runtime gives it (http://127.0.0.1:<port>, or the node's address on Kubernetes); the stack's Mailpit
+#     catches the site's mail.
+# Lando and Docksal are not proven yet: asked for one, the builder says so and changes nothing.
 # The site's accounts and content go through Kanboard's own code in its container (kanboard-site.php, on its models):
 # what it reads (accounts, passwords) comes on its input, never on a command line. Kanboard's core only: no plugin of
 # its directory is installed.
@@ -36,6 +40,11 @@ readonly KANBOARD_FILES='kanboard';
 
 # The free memory a build asks for, in MB: Kanboard's web server and PHP, beside MariaDB.
 readonly KANBOARD_MEMORY_MB=1024;
+
+# On another runtime than DDEV: the port nginx listens on in the web container (a user's port: the image's own start
+# runs as the host user there), and where Kanboard's code is in it (where its image keeps it).
+readonly KANBOARD_SERVE_PORT=8080;
+readonly KANBOARD_CODE='/var/www/app';
 
 # The database of the project: Kanboard supports SQLite, MySQL, MariaDB and PostgreSQL; the Workspace uses MariaDB,
 # so a site's database is the same on every runtime.
@@ -65,12 +74,15 @@ function kanboard_runtime() {
   if declare -f runtime_of > /dev/null ; then runtime_of "$@" ; else echo 'ddev' ; fi
 }
 
-# The address of the site in this folder (or of a new build named PROJECT_NAME, on DDEV).
+# The address of the site in this folder (or of a new build named PROJECT_NAME, on DDEV); on another runtime the one
+# the runtime gives it.
 function kanboard_url() {
+  if [ "$(kanboard_runtime)" != 'ddev' ] && declare -f rt_url > /dev/null ; then rt_url ; return ; fi
   echo "https://${1:-${PROJECT_NAME}}.ddev.site" ;
 }
 
-# Is this folder a Kanboard site of this plugin? On DDEV the builder leaves .ddev/config.kanboard.yaml in it.
+# Is this folder a Kanboard site of this plugin? On DDEV the builder leaves .ddev/config.kanboard.yaml in it; on
+# another runtime the project carries the plugin's claim.
 function kanboard_is_project() {
   local project_path="$1" ;
   [ -f "${project_path}/.ddev/config.kanboard.yaml" ] && return 0 ;
@@ -98,7 +110,7 @@ function kanboard_enter_project() {
 function kanboard_refresh_files() {
   local project_path="$1" from="${WORKSPACE_SCRIPTS}/plugins/kanboard" f ;
   [ -d "${project_path}/${KANBOARD_FILES}" ] || return 0 ;
-  for f in kanboard-site.php ; do
+  for f in kanboard-site.php kanboard-serve.sh ; do
     if [ -f "${from}/${f}" ] && ! cmp -s "${from}/${f}" "${project_path}/${KANBOARD_FILES}/${f}" ; then
       cp "${from}/${f}" "${project_path}/${KANBOARD_FILES}/${f}" || return 1 ;
     fi
@@ -115,19 +127,56 @@ function kanboard_free_memory() {
   awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo 2>/dev/null ;
 }
 
-# Write the project's files: Kanboard's service (.ddev/docker-compose.kanboard.yaml), its image in .ddev/.env, the
-# claim (.ddev/config.kanboard.yaml) and the plugin's scripts.
+# Write the project's files: the plugin's scripts; on DDEV Kanboard's service (.ddev/docker-compose.kanboard.yaml), its
+# image in .ddev/.env and the claim (.ddev/config.kanboard.yaml); on another runtime the claim, Kanboard's image as the
+# web container's, what the project's web image adds to it, and its server.
 function kanboard_write_config() {
-  local project_path="$1" release="$2" ;
+  local project_path="$1" release="$2" runtime="${3:-ddev}" ;
   local from="${WORKSPACE_SCRIPTS}/plugins/kanboard" f ;
-  for f in docker-compose.kanboard.yaml kanboard-site.php ; do
+  for f in docker-compose.kanboard.yaml kanboard-site.php kanboard-serve.sh ; do
     if [ ! -f "${from}/${f}" ] ; then
       echo "${f} is not in ${from}: install the plugin (plugins.sh --install kanboard)." ;
       return 1 ;
     fi
   done
   mkdir -p "${project_path}/${KANBOARD_FILES}" || return 1 ;
-  cp "${from}/kanboard-site.php" "${project_path}/${KANBOARD_FILES}/" || return 1 ;
+  cp "${from}/kanboard-site.php" "${from}/kanboard-serve.sh" "${project_path}/${KANBOARD_FILES}/" || return 1 ;
+
+  if [ "${runtime}" != 'ddev' ] ; then
+    # Another runtime: Kanboard's image is the web container's, and the stack starts it as the host user.
+    ( cd "${project_path}" \
+      && rt_claim kanboard \
+      && rt_stack image "docker.io/kanboard/kanboard:v${release}" \
+      && rt_web_build kanboard <<'DOCKEREOF'
+# Kanboard's image is the web container's here (rt_stack image): its code stays where its image keeps it (/var/www/app),
+# and the stack mounts the project on /var/www/html. The image's own start (its entrypoint, then s6 with nginx, PHP-FPM
+# and the daily cronjob) runs as the host user, www-data with the host's UID by now, so: nginx listens on 8080, plain
+# http, with no certificate (a user has no port under 1024, and the stack's address is http), and the entrypoint makes
+# none: on Podman the folder Kanboard's image declares for it is an empty volume, which a user cannot write; PHP-FPM
+# runs its pool as the user it starts as; s6's service folders, the socket, the pid, nginx's temporary files and the
+# folders the image declares as its data and plugins volumes are the host user's, so the entrypoint's chown of them has
+# nothing to do; Kanboard keeps its data in the project's kanboard/data (DATA_DIR, in the site's values), and its
+# plugins where its image does; and the daily cronjob runs at 08:00, as Kanboard's crontab says, from the cron service
+# itself: BusyBox's crond needs root to run a job ("can't set groups"). tini is the container's first process, and the
+# stack's start runs under it.
+RUN apk add --no-cache tini \
+  && sed -i -e '/^user nginx;/d' -e 's#^pid /var/run/nginx.pid;#pid /run/nginx.pid;#' -e 's/listen  *80;/listen 8080;/' -e '/listen  *443 ssl;/d' -e '/^ *ssl_/d' /etc/nginx/nginx.conf \
+  && if grep -qE '^user |listen +(80|443)[ ;]|ssl_certificate' /etc/nginx/nginx.conf ; then echo "Kanboard's image serves nginx in a way the Kanboard plugin does not know: build this release on DDEV, or update the plugin." >&2 ; exit 1 ; fi \
+  && sed -i -e '/^user = /d' -e '/^group = /d' -e '/^listen.owner = /d' -e '/^listen.group = /d' /etc/php*/php-fpm.conf /etc/php*/php-fpm.d/*.conf \
+  && sed -i -e 's#^ *openssl req .*#    : no certificate: nginx serves plain http on 8080 here#' -e 's#^chown -R nginx:nginx /var/www/app/data$#: the host user owns /var/www/app/data already#' -e 's#^chown -R nginx:nginx /var/www/app/plugins$#: the host user owns /var/www/app/plugins already#' /usr/local/bin/entrypoint.sh \
+  && if grep -qE '^ *(openssl|chown) ' /usr/local/bin/entrypoint.sh ; then echo "Kanboard's entrypoint does what the Kanboard plugin does not know: build this release on DDEV, or update the plugin." >&2 ; exit 1 ; fi \
+  && printf '%s\n' '#!/bin/sh' '# Kanboard'"'"'s daily cronjob at 08:00 (its crontab: 0 8 * * *), as the host user.' 'while : ; do' '  now=$(date +%s) ; next=$(date -d "$(date +%Y-%m-%d) 08:00" +%s)' '  [ "${next}" -le "${now}" ] && next=$((next + 86400))' '  sleep $((next - now))' '  cd /var/www/app && php ./cli cronjob > /dev/null 2>&1' 'done' > /etc/services.d/cron/run \
+  && chmod 755 /etc/services.d/cron/run \
+  && chown -R www-data:www-data /etc/services.d /run /var/lib/nginx /var/log/nginx /var/www/app/data /var/www/app/plugins
+ENTRYPOINT ["/sbin/tini", "--"]
+# Kanboard's own health check (its healthcheck.php), on the port nginx listens on here.
+HEALTHCHECK --timeout=5s --start-period=3s CMD curl -f http://127.0.0.1:8080/healthcheck.php || exit 1
+DOCKEREOF
+    ) || return 1 ;
+    ( cd "${project_path}" && rt_serve "${KANBOARD_SERVE_PORT}" "bash ${KANBOARD_FILES}/kanboard-serve.sh" ) || return 1 ;
+    return 0 ;
+  fi
+
   cp "${from}/docker-compose.kanboard.yaml" "${project_path}/.ddev/docker-compose.kanboard.yaml" || return 1 ;
   printf 'KANBOARD_IMAGE=%s\n' "docker.io/kanboard/kanboard:v${release}" > "${project_path}/.ddev/.env" || return 1 ;
   cat > "${project_path}/.ddev/config.kanboard.yaml" <<YAMLEOF
@@ -141,7 +190,10 @@ YAMLEOF
 # The site's own values (kanboard/env, which only you can read): the address, the project's database and the mail
 # catcher. Kanboard keeps no secret of its own in its environment: the token of its API is made in its database.
 function kanboard_write_env() {
-  local project_path="$1" release="$2" base_url="$3" ;
+  local project_path="$1" release="$2" base_url="$3" runtime="${4:-ddev}" mail='web' data='' ;
+  # The mail catcher: DDEV's web container on DDEV, the stack's own Mailpit elsewhere; elsewhere Kanboard's data (its
+  # files, its cache) in the project's kanboard/data, the host user's (on DDEV a volume named after the project).
+  if [ "${runtime}" != 'ddev' ] ; then mail='mail' ; data="DATA_DIR=/var/www/html/${KANBOARD_FILES}/data" ; fi
   ( umask 077 && cat > "${project_path}/${KANBOARD_FILES}/env" <<ENVEOF
 # The values of this Kanboard site, made by the Kanboard builder of the workspace. Read by Kanboard's container; never
 # printed.
@@ -154,27 +206,39 @@ DB_USERNAME=db
 DB_PASSWORD=db
 DB_NAME=db
 MAIL_TRANSPORT=smtp
-MAIL_SMTP_HOSTNAME=web
+MAIL_SMTP_HOSTNAME=${mail}
 MAIL_SMTP_PORT=1025
 MAIL_FROM=kanboard@example.com
+${data}
 ENVEOF
   ) ;
 }
 
-# Run a command line in Kanboard's container, in its folder (/var/www/app); what is piped in reaches it.
+# Run a command line where Kanboard's code is (/var/www/app); what is piped in reaches it. On DDEV in Kanboard's own
+# container; on another runtime in the web container, as the host user, with the site's values.
 function kanboard_exec() {
-  ddev exec -s kanboard "sh -c $(printf '%q' "cd /var/www/app && ${1}")" ;
+  if [ "$(kanboard_runtime)" = 'ddev' ] ; then
+    ddev exec -s kanboard "sh -c $(printf '%q' "cd /var/www/app && ${1}")" ;
+  else
+    ddev exec "set -a ; . /var/www/html/${KANBOARD_FILES}/env ; set +a ; cd ${KANBOARD_CODE} && ${1}" ;
+  fi
 }
 
-# The folder the plugin's scripts are read from in Kanboard's container.
+# The folder the plugin's scripts are read from where Kanboard runs.
 function kanboard_scripts_dir() {
-  echo '/opt/webship' ;
+  if [ "$(kanboard_runtime)" = 'ddev' ] ; then echo '/opt/webship' ; else echo "/var/www/html/${KANBOARD_FILES}" ; fi
 }
 
-# The answer of Kanboard's login page, asked inside the project's network from the web container: 200 once Kanboard
-# reaches its database (it makes its tables on its first request).
+# Where Kanboard answers inside the project's network: on DDEV its own service, from the web container; on another
+# runtime its nginx, in the web container itself.
+function kanboard_inside_url() {
+  if [ "$(kanboard_runtime)" = 'ddev' ] ; then echo 'http://kanboard' ; else echo "http://127.0.0.1:${KANBOARD_SERVE_PORT}" ; fi
+}
+
+# The answer of Kanboard's login page, asked inside the project's network: 200 once Kanboard reaches its database (it
+# makes its tables on its first request).
 function kanboard_probe() {
-  ddev exec "curl -s -o /dev/null -m 15 -w '%{http_code}' http://kanboard/login" < /dev/null 2>/dev/null | tr -d '\r' | tail -1 ;
+  ddev exec "curl -s -o /dev/null -m 15 -w '%{http_code}' $(kanboard_inside_url)/login" < /dev/null 2>/dev/null | tr -d '\r' | tail -1 ;
 }
 
 # Wait until the site answers, in the project's folder: up to five minutes.
@@ -186,7 +250,7 @@ function kanboard_wait() {
     sleep 3 ;
   done
   echo "Kanboard did not answer (its login page: ${code:-none}); the end of its log:" ;
-  ddev logs -s kanboard --tail 40 < /dev/null 2>/dev/null ;
+  if [ "$(kanboard_runtime)" = 'ddev' ] ; then ddev logs -s kanboard --tail 40 < /dev/null 2>/dev/null ; else ddev logs --tail 40 < /dev/null 2>/dev/null ; fi
   return 1 ;
 }
 
@@ -244,8 +308,12 @@ function kanboard_build() {
   local project_path="${WORKSPACE_ROOT}/${doc_name}/${PROJECT_NAME}" ;
   local runtime ; runtime="$(cd "${WORKSPACE_ROOT}/${doc_name}" && kanboard_runtime)" ;
 
-  if [ "${runtime}" != 'ddev' ] ; then
-    echo "Kanboard builds on DDEV for now (--runtime ddev), not on ${runtime}: that runtime is not proven for it yet. Nothing was changed." ;
+  case "${runtime}" in
+    ddev|docker|podman|kubernetes) ;;
+    *) echo "Kanboard builds on DDEV, Docker Compose, Podman and Kubernetes for now (--runtime ddev, docker, podman or kubernetes), not on ${runtime}: that runtime is not proven for it yet. Nothing was changed." ; exit 1 ;;
+  esac
+  if [ "${runtime}" != 'ddev' ] && ! declare -f rt_serve > /dev/null ; then
+    echo "--runtime ${runtime} needs a Webship Workspace whose runtimes serve an application of its own (rt_serve, webship/workspace#841): update the workspace, or build on DDEV. Nothing was changed." ;
     exit 1 ;
   fi
   if ! [[ "${release}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ; then
@@ -282,13 +350,23 @@ function kanboard_build() {
   mkdir -p "${PROJECT_NAME}" ;
   cd "${project_path}" || exit 1 ;
 
-  ddev config --project-type=generic --project-name=${PROJECT_NAME} --database=${KANBOARD_DATABASE} \
-    --nodejs-version=$(ddev_nodejs_version) < /dev/null || exit 1 ;
-  kanboard_write_config "${project_path}" "${release}" || exit 1 ;
+  if [ "${runtime}" = 'ddev' ] ; then
+    ddev config --project-type=generic --project-name=${PROJECT_NAME} --database=${KANBOARD_DATABASE} \
+      --nodejs-version=$(ddev_nodejs_version) < /dev/null || exit 1 ;
+  else
+    # The runtime's own project: Docker Compose, Podman or Kubernetes, through the runtime layer.
+    ddev config --project-type=generic --webserver-type=generic --project-name=${PROJECT_NAME} --database=${KANBOARD_DATABASE} --auto < /dev/null || exit 1 ;
+  fi
+  kanboard_write_config "${project_path}" "${release}" "${runtime}" || exit 1 ;
+  # The address once the runtime has given the project its port.
   local base_url ; base_url="$(kanboard_url)" ;
-  kanboard_write_env "${project_path}" "${release}" "${base_url}" || exit 1 ;
+  kanboard_write_env "${project_path}" "${release}" "${base_url}" "${runtime}" || exit 1 ;
 
-  echo "Starting the project and Kanboard ${release}: its image is a download of about 35 MB the first time." ;
+  if [ "${runtime}" = 'ddev' ] ; then
+    echo "Starting the project and Kanboard ${release}: its image is a download of about 35 MB the first time." ;
+  else
+    echo "Starting the project and Kanboard ${release}: its image is a download of about 35 MB the first time, and the project's web image is built from it." ;
+  fi
   ddev_up start -y < /dev/null || exit 1 ;
   kanboard_wait || exit 1 ;
 
@@ -405,9 +483,14 @@ function kanboard_cli_tool() {
   kanboard_wait > /dev/null || { echo "Kanboard of ${PROJECT_NAME} does not answer; start it again (ddev restart in ${doc_name}/${PROJECT_NAME})." ; exit 1 ; } ;
 
   if [ ! "${RUN}" == '_none_' ] ; then
-    # Kanboard's own console (./cli <command>), in its container, as the web server's user, who owns its files.
+    # Kanboard's own console (./cli <command>), as the user who owns its files: on DDEV the web server's, in Kanboard's
+    # container; on another runtime the host user, in the web container.
     local words ; read -r -a words <<< "${RUN}" ;
-    ddev exec -s kanboard "su -s /bin/sh nginx -c $(printf '%q' "cd /var/www/app && ./cli $(printf '%q ' "${words[@]}")")" < /dev/null ;
+    if [ "$(kanboard_runtime)" = 'ddev' ] ; then
+      ddev exec -s kanboard "su -s /bin/sh nginx -c $(printf '%q' "cd /var/www/app && ./cli $(printf '%q ' "${words[@]}")")" < /dev/null ;
+    else
+      kanboard_exec "./cli $(printf '%q ' "${words[@]}")" < /dev/null ;
+    fi
     exit $? ;
   fi
 

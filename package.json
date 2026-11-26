@@ -63,6 +63,7 @@
       "machine": [
         "scripts/docker-compose.kanboard.yaml",
         "scripts/kanboard-site.php",
+        "scripts/kanboard-serve.sh",
         "testing/site.feature"
       ]
     },
@@ -84,8 +85,10 @@
       ]
     },
     "features": [
-      "features/kanboard.feature"
-    ]
+      "features/kanboard.feature",
+      "features/kanboard-runtimes.feature"
+    ],
+    "featuresSite": "cmd-kanboard-project.sh ci-kanboard --install --add-users --sample-content --runtime docker"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
